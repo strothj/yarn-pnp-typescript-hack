@@ -10,7 +10,7 @@
     "pnp": true
   },
   "scripts": {
-    "build": "node ./resolvers/typescript/tsc.js"
+    "build": "node ../pnp-typescript/dist/pnp-tsc.js"
   },
   "dependencies": {
     "chalk": "^2.4.1",

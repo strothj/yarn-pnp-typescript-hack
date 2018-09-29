@@ -1,0 +1,21 @@
+{
+  "name": "pnp-typescript",
+  "version": "1.0.0",
+  "license": "MIT",
+  "bin": {
+    "pnp-tsc": "./bin/pnp-tsc",
+    "pnp-tsserver": "./bin/pnp-tsserver"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^10.11.3",
+    "prettier": "^1.14.3",
+    "tslint": "^5.11.0",
+    "tslint-config-airbnb": "^5.11.0",
+    "tslint-config-prettier": "^1.15.0",
+    "tslint-plugin-prettier": "^2.0.0",
+    "typescript": "^3.1.1"
+  }
+}
