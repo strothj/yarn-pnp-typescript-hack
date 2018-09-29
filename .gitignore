@@ -1,7 +1,7 @@
 node_modules/
 
 # Build Output
-/dist
+dist/
 
 # Yarn Plug'n'Play
 .pnp.js
