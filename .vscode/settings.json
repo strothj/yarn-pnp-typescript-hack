@@ -1,0 +1,4 @@
+{
+  "typescript.tsdk": "./kitchen-sink/resolvers/typescript/lib",
+  "typescript.tsserver.log": "normal"
+}

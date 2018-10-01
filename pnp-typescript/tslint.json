@@ -12,6 +12,7 @@
     "interface-name": [true, "never-prefix"],
     "only-arrow-functions": false,
     "no-implicit-dependencies": [true, "dev"],
+    "object-shorthand-properties-first": false,
     "variable-name": [
       true,
       "ban-keywords",

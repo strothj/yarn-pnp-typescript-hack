@@ -1,41 +1,29 @@
-type TypeScriptModule = typeof import("typescript");
-type CreateProgramOptions = import("typescript").CreateProgramOptions;
-type Diagnostic = import("typescript").Diagnostic;
-type CompilerOptions = import("typescript").CompilerOptions;
-type CompilerHost = import("typescript").CompilerHost;
-type Program = import("typescript").Program;
-// type ResolvedModule = import("typescript").ResolvedModule;
+import fs from "fs";
+import path from "path";
 
 // tslint:disable-next-line:no-var-keyword prefer-const
 var ts!: TypeScriptModule;
 
-// tslint:disable-next-line:no-shadowed-variable
-(function(ts: TypeScriptModule) {
-  const fs: typeof import("fs") = require("fs");
-  const path: typeof import("path") = require("path");
+const pnp = getPnpInstance()!;
+if (pnp) {
+  checkPnpImplementationVersion(pnp.VERSIONS);
+}
 
-  const tscModuleFileName = require.resolve("typescript/lib/tsc.js");
-  const tscModuleDirectory = path.dirname(tscModuleFileName);
-  const tscModuleCode = fs.readFileSync(tscModuleFileName, "utf8");
+const tsModuleFileName = require.resolve(
+  `typescript/lib/${path.basename(__filename)}`,
+);
+const tsModuleDirectory = path.dirname(tsModuleFileName);
+const tsModuleCode = fs.readFileSync(tsModuleFileName, "utf8");
 
-  // Override these so path resolution to TypeScript standard library files
-  // can work as expected.
-  // @ts-ignore
-  __dirname = tscModuleDirectory;
-  // @ts-ignore
-  __filename = tscModuleFileName;
+// @ts-ignore
+__filename = tsModuleFileName;
+// @ts-ignore
+__dirname = tsModuleDirectory;
 
-  // If Yarn Plug'n'Play does not exist in the environment, avoid the monkey
-  // patching and continue with normal behavior.
-  const pnp = getPnpInstance()!;
-  if (!pnp) {
-    // tslint:disable-next-line:no-eval
-    eval(tscModuleCode);
-    return;
-  }
-
-  checkPnpImplementationVersion();
-
+if (!pnp) {
+  // tslint:disable-next-line:no-eval
+  eval(tsModuleCode);
+} else {
   // Here we implement a replacement for TypeScript's createProgram function. We
   // create a custom CompilerHost with an implementation for resolveModuleNames.
   // TypeScript/src/compiler/program.ts
@@ -137,11 +125,11 @@ var ts!: TypeScriptModule;
     );
   }
 
-  let monkeyPatchedTscModuleCode = tscModuleCode.replace(
+  let monkeyPatchedTsModuleCode = tsModuleCode.replace(
     "function createProgram",
     "function createProgramOriginal",
   );
-  monkeyPatchedTscModuleCode = monkeyPatchedTscModuleCode.replace(
+  monkeyPatchedTsModuleCode = monkeyPatchedTsModuleCode.replace(
     "ts.createProgram = createProgram;",
     `
     ${createProgram.toString()};
@@ -150,47 +138,92 @@ var ts!: TypeScriptModule;
   );
 
   // tslint:disable-next-line:no-eval
-  eval(monkeyPatchedTscModuleCode);
+  eval(monkeyPatchedTsModuleCode);
+}
 
-  /**
-   * Reuse an existing instance of Yarn Plug'n'Play if it exists, otherwise
-   * attempt to require it.
-   */
-  function getPnpInstance(): YarnPlugNPlay | null {
-    let pnpInstance: YarnPlugNPlay | null = null;
+/**
+ * Reuse an existing instance of Yarn Plug'n'Play if it exists, otherwise
+ * attempt to require it.
+ */
+function getPnpInstance(): YarnPlugNPlay | null {
+  let pnpInstance: YarnPlugNPlay | null = null;
 
+  try {
+    // tslint:disable-next-line:no-implicit-dependencies
+    pnpInstance = require("pnpapi");
+  } catch {
+    // It's okay if an error is thrown here. Yarn Plug'n'Play intercepts the
+    // require when it is loaded in the environment.
+  }
+
+  if (!pnpInstance) {
+    const resolverOptions = getResolverOptions();
+    if (!resolverOptions) return null;
     try {
-      // tslint:disable-next-line:no-implicit-dependencies
-      pnpInstance = require("pnpapi");
+      pnpInstance = require(path.join(
+        resolverOptions.pnpRootDir,
+        ".pnp.js",
+      )) as YarnPlugNPlay;
     } catch {
       // It's okay if an error is thrown here. Yarn Plug'n'Play intercepts the
       // require when it is loaded in the environment.
+      return null;
     }
-    if (pnpInstance) return pnpInstance;
-
-    const pnpResolverFileName = path.resolve(process.cwd(), ".pnp.js");
-    if (!fs.existsSync(pnpResolverFileName)) return null;
-
-    pnpInstance = require(pnpResolverFileName) as YarnPlugNPlay;
     pnpInstance.setup();
-
-    return pnpInstance;
   }
 
-  /**
-   * Throw an error is the Yarn Plug'n'Play resolver api version is not
-   * supported.
-   */
-  function checkPnpImplementationVersion() {
-    if (pnp.VERSIONS.std !== 1) {
-      throw new Error(
-        `Unsupported Yarn Plug'n'Play api version: ${
-          pnp.VERSIONS.std
-        }. Only version 1 is supported.`,
-      );
-    }
+  return pnpInstance;
+}
+
+/**
+ * Throw an error is the Yarn Plug'n'Play resolver api version is not
+ * supported.
+ */
+function checkPnpImplementationVersion(versions: YarnPlugNPlay["VERSIONS"]) {
+  if (versions.std !== 1) {
+    throw new Error(
+      `Unsupported Yarn Plug'n'Play api version: ${
+        versions.std
+      }. Only version 1 is supported.`,
+    );
   }
-})(ts || {});
+}
+
+/**
+ * Load the resolver settings by searching upward through parent directories.
+ */
+function getResolverOptions() {
+  let currentDir = __dirname;
+
+  const { root } = path.parse(currentDir);
+
+  let configFileName: string;
+  while (true) {
+    configFileName = path.join(currentDir, "typescript-resolver.json");
+
+    if (fs.existsSync(configFileName)) break;
+
+    if (currentDir === root) return null;
+
+    currentDir = path.dirname(currentDir);
+  }
+
+  const options: ResolverOptions = JSON.parse(
+    fs.readFileSync(configFileName, "utf8"),
+  );
+  if (typeof options !== "object" || typeof options.pnpRootDir !== "string") {
+    throw new Error(
+      "Expected resolver options to have a string pnpRootDir field.",
+    );
+  }
+
+  if (path.isAbsolute(options.pnpRootDir)) {
+    throw new Error("Expected pnpRootDir to be a relative path.");
+  }
+
+  options.pnpRootDir = path.resolve(currentDir, options.pnpRootDir);
+  return options;
+}
 
 interface YarnPackageReference {
   name: string | null;
@@ -250,20 +283,30 @@ interface YarnPlugNPlay {
   ) => YarnPackageInformation | null;
 }
 
-// Force treatment of this file as a module so we can augment globally.
-export {};
-
-declare global {
-  var createCreateProgramOptions: (
-    rootNames: ReadonlyArray<string>,
-    options: CompilerOptions,
-    host?: CompilerHost | undefined,
-    oldProgram?: Program | undefined,
-    configFileParsingDiagnostics?: ReadonlyArray<Diagnostic> | undefined,
-  ) => CreateProgramOptions;
-  var createCompilerHost: (
-    options: CompilerOptions,
-    setParentNodes?: boolean | undefined,
-  ) => CompilerHost;
-  var createProgramOriginal: typeof import("typescript").createProgram;
+interface ResolverOptions {
+  /**
+   * Absolute path to Yarn Plug'n'Play project root.
+   * This would be the directory containing a potential .pnp.js resolver file.
+   */
+  pnpRootDir: string;
 }
+
+type TypeScriptModule = typeof import("typescript");
+type CreateProgramOptions = import("typescript").CreateProgramOptions;
+type Diagnostic = import("typescript").Diagnostic;
+type CompilerOptions = import("typescript").CompilerOptions;
+type CompilerHost = import("typescript").CompilerHost;
+type Program = import("typescript").Program;
+
+declare var createCreateProgramOptions: (
+  rootNames: ReadonlyArray<string>,
+  options: CompilerOptions,
+  host?: CompilerHost | undefined,
+  oldProgram?: Program | undefined,
+  configFileParsingDiagnostics?: ReadonlyArray<Diagnostic> | undefined,
+) => CreateProgramOptions;
+declare var createCompilerHost: (
+  options: CompilerOptions,
+  setParentNodes?: boolean | undefined,
+) => CompilerHost;
+declare var createProgramOriginal: typeof import("typescript").createProgram;
